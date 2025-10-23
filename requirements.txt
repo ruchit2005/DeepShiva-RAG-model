@@ -1,0 +1,39 @@
+# Core dependencies
+chromadb
+langchain
+langchain-community
+sentence-transformers
+
+# Google Drive integration
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+
+# Document processing
+pypdf
+python-docx
+openpyxl
+python-pptx
+unstructured
+markdownify
+
+# Embeddings
+openai
+tiktoken
+cohere
+
+# Utilities
+python-dotenv
+pydantic
+tqdm
+numpy
+pandas
+
+# Evaluation
+scikit-learn
+ragas
+datasets
+
+# Optional: LLM providers
+anthropic
+together
