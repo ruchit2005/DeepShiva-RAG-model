@@ -7,6 +7,7 @@ from config.settings import settings
 from src.document_processor.gdrive_client import GoogleDriveClient
 from src.document_processor.loader import DocumentLoader
 from src.document_processor.chunker import OptimizedChunker
+from src.document_processor.enrichment_manager import EnrichmentManager
 from src.embeddings.embedding_manager import EmbeddingManager
 from src.vector_store.chroma_manager import ChromaDBManager
 from src.retrieval.retriever import Retriever
@@ -33,8 +34,13 @@ class RAGAgent:
         
         self.gdrive_client = None
         self.embedding_manager = EmbeddingManager()
+        self.enrichment_manager = EnrichmentManager(use_enrichment=settings.USE_ENRICHMENT)
         self.chroma_manager = ChromaDBManager(embedding_manager=self.embedding_manager)
-        self.retriever = Retriever(self.chroma_manager)
+        self.retriever = Retriever(
+            self.chroma_manager,
+            use_query_optimization=settings.USE_QUERY_OPTIMIZATION,
+            use_gatekeeper=settings.USE_GATEKEEPER
+        )
         self.evaluator = RetrievalEvaluator()
         
         logger.info("RAG Agent initialized successfully")
@@ -94,6 +100,11 @@ class RAGAgent:
         chunks = chunker.chunk_documents(documents)
         logger.info(f"Created {len(chunks)} chunks using {settings.CHUNKING_STRATEGY} strategy")
         
+        # Enrich chunks with metadata (if enabled)
+        if settings.USE_ENRICHMENT:
+            logger.info("Enriching chunks with LLM-generated metadata...")
+            chunks = self.enrichment_manager.enrich_chunks_batch(chunks, show_progress=True)
+        
         # Add to vector store
         num_added = self.chroma_manager.add_documents(chunks)
         logger.info(f"Added {num_added} chunks to ChromaDB")
@@ -103,17 +114,19 @@ class RAGAgent:
     def search(self, 
                query: str,
                top_k: int = None,
-               use_reranking: bool = None) -> List[dict]:
+               use_reranking: bool = None,
+               validate_results: bool = None) -> dict:
         """
-        Search for relevant documents.
+        Advanced search with multi-step pipeline.
         
         Args:
             query: Search query
             top_k: Number of results
             use_reranking: Override default reranking setting
+            validate_results: Whether to validate results quality
         
         Returns:
-            List of relevant documents
+            Dict with results, metadata, and any clarifications needed
         """
         if use_reranking is not None:
             self.retriever.use_reranking = use_reranking
@@ -121,9 +134,28 @@ class RAGAgent:
                 from src.retrieval.reranker import Reranker
                 self.retriever.reranker = Reranker()
         
-        results = self.retriever.retrieve(query=query, top_k=top_k)
+        validate = validate_results if validate_results is not None else settings.VALIDATE_RESULTS
         
+        response = self.retriever.retrieve(
+            query=query, 
+            top_k=top_k,
+            validate_results=validate
+        )
+        
+        results = response.get('results', [])
         logger.info(f"Found {len(results)} results for query: '{query}'")
+        
+        # Check if clarification is needed
+        if response.get('clarification_needed'):
+            logger.info(f"Clarification needed: {response.get('clarification')}")
+        
+        # Check validation results
+        if validate and 'validation' in response.get('metadata', {}):
+            validation = response['metadata']['validation']
+            if not validation['is_valid']:
+                logger.warning(f"Results validation issues: {validation['issues']}")
+        
+        return response
         return results
     
     def evaluate_system(self, 
@@ -224,14 +256,27 @@ def main():
             print("❌ Error: --query is required for search command")
             return
         
-        results = agent.search(
+        response = agent.search(
             query=args.query,
             top_k=args.top_k,
             use_reranking=not args.no_rerank
         )
         
+        # Check if clarification is needed
+        if response.get('clarification_needed'):
+            print(f"\n❓ Clarification Needed:\n{response.get('clarification')}")
+            return
+        
+        results = response.get('results', [])
+        metadata = response.get('metadata', {})
+        
         print(f"\n🔍 Search Results for: '{args.query}'\n")
         print("=" * 80)
+        
+        # Show query optimization if used
+        if metadata.get('optimized_query'):
+            print(f"📝 Optimized Query: {metadata['optimized_query']}\n")
+            print("=" * 80)
         
         for i, result in enumerate(results, 1):
             print(f"\n📄 Result {i} (Similarity: {result['similarity']:.4f})")
@@ -240,6 +285,14 @@ def main():
             if 'rerank_score' in result:
                 print(f"Rerank Score: {result['rerank_score']:.4f}")
             print("-" * 80)
+        
+        # Show validation results if enabled
+        if metadata.get('validation'):
+            validation = metadata['validation']
+            status = "✅ VALID" if validation['is_valid'] else "⚠️ NEEDS REVIEW"
+            print(f"\n{status} | Confidence: {validation['confidence']:.2f}")
+            if validation['issues']:
+                print(f"Issues: {', '.join(validation['issues'])}")
     
     elif args.command == 'evaluate':
         metrics = agent.evaluate_system(num_test_queries=args.num_test_queries)

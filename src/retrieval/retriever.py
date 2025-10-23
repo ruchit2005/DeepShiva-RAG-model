@@ -1,26 +1,37 @@
 from typing import List, Dict, Optional
 from src.vector_store.chroma_manager import ChromaDBManager
 from src.retrieval.reranker import Reranker
+from src.retrieval.query_processor import QueryOptimizer, Gatekeeper, Auditor
 from config.settings import settings
 import logging
 
 logger = logging.getLogger(__name__)
 
 class Retriever:
-    """Handles document retrieval with optional reranking."""
+    """Advanced document retrieval with multi-step pipeline."""
     
     def __init__(self, 
                  chroma_manager: ChromaDBManager,
-                 use_reranking: bool = None):
+                 use_reranking: bool = None,
+                 use_query_optimization: bool = True,
+                 use_gatekeeper: bool = False):
         """
-        Initialize retriever.
+        Initialize retriever with advanced features.
         
         Args:
             chroma_manager: ChromaDBManager instance
             use_reranking: Whether to use reranking (default from settings)
+            use_query_optimization: Whether to optimize queries before search
+            use_gatekeeper: Whether to validate query clarity
         """
         self.chroma_manager = chroma_manager
         self.use_reranking = use_reranking if use_reranking is not None else settings.USE_RERANKING
+        
+        # Initialize advanced components
+        # Pass embedding manager into QueryOptimizer for verification to prevent query drift
+        self.query_optimizer = QueryOptimizer(embedding_manager=self.chroma_manager.embedding_manager) if use_query_optimization else None
+        self.gatekeeper = Gatekeeper() if use_gatekeeper else None
+        self.auditor = Auditor()
         
         if self.use_reranking:
             self.reranker = Reranker()
@@ -28,33 +39,67 @@ class Retriever:
         else:
             self.reranker = None
             logger.info("Retriever initialized without reranking")
+        
+        if self.query_optimizer and self.query_optimizer.enabled:
+            logger.info("Query optimization enabled")
+        if self.gatekeeper and self.gatekeeper.enabled:
+            logger.info("Gatekeeper enabled")
     
     def retrieve(self, 
                 query: str,
                 top_k: Optional[int] = None,
                 filters: Optional[Dict] = None,
-                similarity_threshold: Optional[float] = None) -> List[Dict]:
+                similarity_threshold: Optional[float] = None,
+                validate_results: bool = False) -> Dict[str, any]:
         """
-        Retrieve relevant documents for a query.
+        Advanced multi-step retrieval with optimization and validation.
         
         Args:
             query: Search query
             top_k: Number of results to return
             filters: Metadata filters
             similarity_threshold: Minimum similarity score
+            validate_results: Whether to run auditor validation
         
         Returns:
-            List of retrieved documents with scores
+            Dict with 'results', 'metadata', and optionally 'validation'
         """
         top_k = top_k or settings.TOP_K
         similarity_threshold = similarity_threshold or settings.SIMILARITY_THRESHOLD
         
-        # Initial retrieval - get more results if reranking
-        initial_k = top_k * 3 if self.use_reranking else top_k
+        metadata = {
+            'original_query': query,
+            'optimized_query': None,
+            'gatekeeper_check': None,
+            'validation': None
+        }
         
-        # Retrieve from ChromaDB
+        # Step 1: Gatekeeper check (optional)
+        if self.gatekeeper and self.gatekeeper.enabled:
+            clarity_check = self.gatekeeper.check_query_clarity(query)
+            metadata['gatekeeper_check'] = clarity_check
+            
+            if not clarity_check['is_clear']:
+                logger.warning(f"Query needs clarification: {query}")
+                return {
+                    'results': [],
+                    'metadata': metadata,
+                    'clarification_needed': True,
+                    'clarification': clarity_check['clarification']
+                }
+        
+        # Step 2: Query optimization
+        search_query = query
+        if self.query_optimizer and self.query_optimizer.enabled:
+            search_query = self.query_optimizer.optimize_query(query)
+            metadata['optimized_query'] = search_query
+            logger.info(f"Optimized: '{query}' -> '{search_query}'")
+        
+        # Step 3: Initial broad retrieval
+        initial_k = top_k * 3 if self.use_reranking else top_k * 2
+        
         results = self.chroma_manager.search(
-            query=query,
+            query=search_query,
             top_k=initial_k,
             filter_dict=filters
         )
@@ -67,16 +112,30 @@ class Retriever:
         
         logger.info(f"Retrieved {len(filtered_results)} documents above threshold {similarity_threshold}")
         
-        # Apply reranking if enabled
+        # Step 4: Reranking (if enabled)
         if self.use_reranking and filtered_results:
             reranked_results = self.reranker.rerank(
-                query=query,
+                query=search_query,
                 documents=filtered_results,
                 top_k=top_k
             )
-            return reranked_results[:top_k]
+            final_results = reranked_results[:top_k]
+        else:
+            final_results = filtered_results[:top_k]
         
-        return filtered_results[:top_k]
+        # Step 5: Validation (optional)
+        if validate_results and self.auditor and self.auditor.enabled:
+            validation = self.auditor.validate_results(query, final_results)
+            metadata['validation'] = validation
+            
+            if not validation['is_valid']:
+                logger.warning(f"Results failed validation: {validation['issues']}")
+        
+        return {
+            'results': final_results,
+            'metadata': metadata,
+            'clarification_needed': False
+        }
     
     def retrieve_with_context(self,
                              query: str,

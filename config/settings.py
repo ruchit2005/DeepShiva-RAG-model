@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     USE_RERANKING: bool = True
     RERANK_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     
+    # Advanced RAG features
+    USE_QUERY_OPTIMIZATION: bool = False  # Requires OpenAI API key
+    USE_GATEKEEPER: bool = False  # Requires OpenAI API key  
+    USE_ENRICHMENT: bool = False  # Requires OpenAI API key
+    VALIDATE_RESULTS: bool = False  # Requires OpenAI API key
+    
     # API Keys (optional - only if using paid models)
     OPENAI_API_KEY: Optional[str] = None
     COHERE_API_KEY: Optional[str] = None

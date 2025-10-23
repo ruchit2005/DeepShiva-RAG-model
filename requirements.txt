@@ -2,6 +2,7 @@
 chromadb
 langchain
 langchain-community
+langchain-experimental
 sentence-transformers
 
 # Google Drive integration
@@ -24,7 +25,8 @@ cohere
 
 # Utilities
 python-dotenv
-pydantic
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
 tqdm
 numpy
 pandas
