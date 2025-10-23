@@ -38,13 +38,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Data directories
-data/raw/*
-data/processed/*
-data/chroma_db/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-!data/chroma_db/.gitkeep
+
 
 # Logs
 *.log
