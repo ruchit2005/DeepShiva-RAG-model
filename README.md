@@ -85,9 +85,44 @@ TOP_K=5
 SIMILARITY_THRESHOLD=0.3
 USE_RERANKING=True
 
+# Advanced RAG feature flags (when OPENAI_API_KEY is configured)
+# Smart query optimizer will decide when to rewrite queries automatically
+USE_QUERY_OPTIMIZATION=True
+# Gatekeeper: ask clarifying questions for ambiguous queries
+USE_GATEKEEPER=False
+# Enrichment: generate LLM metadata for document chunks
+USE_ENRICHMENT=False
+# Auditor: validate retrieval quality with LLM
+VALIDATE_RESULTS=False
+
 # Optional: API Keys for paid models
 # OPENAI_API_KEY=your_key_here
 # COHERE_API_KEY=your_key_here
+```
+
+### Smart Query Optimization (automatic)
+
+The system includes a smart query optimizer that automatically decides whether to rewrite a user's query before performing retrieval. This is enabled with `USE_QUERY_OPTIMIZATION=True` and requires an `OPENAI_API_KEY` to be present.
+
+When optimization is skipped:
+- The query contains multiple precise medical/technical terms (e.g., "excessive thirst, anal wetness, shifting dullness").
+- The query lists several specific symptoms or named entities.
+
+When optimization is applied:
+- The query is very short or vague (e.g., "stomach pain", "tell me about ayurveda").
+- The query is conversational and lacks domain-specific terminology (e.g., "I have a headache").
+
+Safety mechanisms:
+- Any optimized query is verified against the original using embeddings and lexical overlap. If the optimized version drifts too far from the original meaning, the system falls back to the original query.
+
+Examples:
+
+```bash
+# Precise medical query - optimizer will usually skip
+python main.py search --query "i am having excessive thirst, anal wetness and shifting dullness?" --top-k 3
+
+# Vague query - optimizer may expand and improve retrieval
+python main.py search --query "i have stomach ache" --top-k 3
 ```
 
 #### Set up Google Drive (Optional):
