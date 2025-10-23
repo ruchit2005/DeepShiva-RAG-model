@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any, List
 from langchain_community.chat_models import ChatOpenAI
 from config.settings import settings
 from src.embeddings.embedding_manager import EmbeddingManager
+from src.retrieval.medical_terminology import expand_query_with_ayurvedic_terms
 import logging
 import re
 
@@ -47,26 +48,30 @@ class Gatekeeper:
         if not self.enabled:
             return {'is_clear': True, 'clarification': None}
         
-        prompt = f"""You are an expert at identifying ambiguous queries.
+        prompt = f"""You are an expert at identifying ambiguous queries in a medical/Ayurvedic knowledge base.
 
 Analyze this user query and determine if it's specific enough to answer precisely.
 
-A SPECIFIC query:
-- Asks for particular facts, numbers, dates, or named entities
-- Has clear scope (e.g., "revenue in Q4 2023")
-- Requests comparison or analysis of defined metrics
-- Examples: "What was the revenue trend from 2022-2023?", "List the top 3 risk factors"
+A SPECIFIC query (ACCEPT these):
+- Medical symptoms or health conditions (e.g., "stomach ache", "fever", "headache")
+- Treatment inquiries (e.g., "treatment for diabetes", "remedy for cold")
+- Disease or condition names (e.g., "what is Atisara?", "causes of jaundice")
+- Specific medical questions (e.g., "dosage of Ashwagandha", "side effects of...")
+- Examples: "I have stomach ache", "What causes excessive thirst?", "Treatment for piles"
 
-An AMBIGUOUS query:
-- Is open-ended without clear scope (e.g., "How is the company doing?")
-- Lacks specificity about what information is needed
-- Could have many different interpretations
-- Examples: "Tell me about Microsoft", "What's happening?", "Give me an overview"
+An AMBIGUOUS query (REJECT these):
+- Extremely vague without ANY medical context (e.g., "tell me something", "what's this about?")
+- Open-ended non-medical queries (e.g., "give me an overview", "what do you know?")
+- Queries with zero medical/health terms
+- Examples: "Tell me about everything", "What's in this database?", "Give me information"
+
+IMPORTANT: Medical symptom descriptions are ALWAYS specific enough, even if conversational.
+"I am having stomach ache" is SPECIFIC. "Tell me about health" is AMBIGUOUS.
 
 Query: "{query}"
 
-If the query is ambiguous, formulate ONE specific, polite clarification question that would help narrow it down.
-If the query is clear, respond with just "OK".
+If the query has ANY medical context or symptom, respond with just "OK".
+If the query is completely vague with NO medical context, formulate ONE specific clarification question.
 
 Response:"""
         
@@ -240,28 +245,44 @@ class QueryOptimizer:
         if not self.enabled:
             return query
         
-        # Smart decision: check if optimization would help
+        # Step 1: Expand with Ayurvedic terminology first
+        expanded_query = expand_query_with_ayurvedic_terms(query)
+        if expanded_query != query:
+            logger.info(f"Added Ayurvedic terms: '{query}' -> '{expanded_query}'")
+            query = expanded_query
+        
+        # Step 2: Smart decision - check if LLM optimization would help
         if not self.should_optimize_query(query):
             logger.info(f"Query used as-is (already precise): '{query}'")
             return query
         
-        context_info = context or "financial documents and business reports"
+        context_info = context or "medical and Ayurvedic treatment documents"
         
-        prompt = f"""You are an expert at optimizing search queries for semantic search systems.
+        prompt = f"""You are an expert at optimizing search queries for medical/Ayurvedic knowledge retrieval.
 
-Your task: Transform the user's query into a more precise, keyword-rich query optimized for finding relevant information in {context_info}.
+Your task: Transform the user's query into a better search query for finding relevant information in {context_info}.
+
+CRITICAL RULES FOR MEDICAL QUERIES:
+1. PRESERVE all medical terms and symptoms mentioned
+2. Only add closely related medical synonyms if helpful
+3. DO NOT add generic terms like "medical reports", "patient case studies", "diagnostic criteria"
+4. DO NOT over-expand - keep queries focused
+5. Remove conversational filler ("i am having" → keep symptom)
+
+Examples:
+- "I have stomach ache" → "stomach ache abdominal pain gastric discomfort"
+- "excessive thirst and fever" → "excessive thirst polydipsia fever pyrexia"
+- "treatment for diabetes" → "diabetes treatment management Ayurvedic remedies"
 
 Guidelines:
-1. Include specific technical terms and domain vocabulary
-2. Expand abbreviations or vague terms
-3. Add context that would help match relevant documents
-4. Keep it concise but information-dense
-5. Focus on nouns, metrics, and entities rather than questions
-6. Remove unnecessary filler words
+- Add medical synonyms or related terms ONLY if directly relevant
+- Keep it concise (max 10-15 words)
+- Focus on the core medical terms
+- Remove filler words like "I am", "I have", "tell me"
 
 Original Query: "{query}"
 
-Optimized Query:"""
+Optimized Query (concise, focused, no generic terms):"""
         
         try:
             optimized = self.llm.invoke(prompt).content.strip()

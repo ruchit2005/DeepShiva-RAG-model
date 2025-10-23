@@ -12,7 +12,7 @@ google-auth-oauthlib
 
 # Document processing
 pypdf
-python-docx
+python-d ocx
 openpyxl
 python-pptx
 unstructured

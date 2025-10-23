@@ -152,11 +152,10 @@ class RAGAgent:
         # Check validation results
         if validate and 'validation' in response.get('metadata', {}):
             validation = response['metadata']['validation']
-            if not validation['is_valid']:
+            if validation and not validation['is_valid']:
                 logger.warning(f"Results validation issues: {validation['issues']}")
         
         return response
-        return results
     
     def evaluate_system(self, 
                        test_queries: Optional[List] = None,
