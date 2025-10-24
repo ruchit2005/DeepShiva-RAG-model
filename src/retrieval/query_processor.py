@@ -468,3 +468,181 @@ Provide concise response:"""
                 'issues': issues,
                 'suggestion': None
             }
+
+
+class Strategist:
+    """
+    Intelligently selects the best retrieval strategy based on query characteristics.
+    Decides between: basic retrieval, MMR (diversity), hybrid search, or context-aware retrieval.
+    """
+    
+    def __init__(self):
+        """Initialize strategist."""
+        self.enabled = True
+        logger.info("Strategist initialized")
+    
+    def select_strategy(self, query: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Analyze query and select optimal retrieval strategy.
+        
+        Args:
+            query: User's search query
+            context: Optional context (previous results, user feedback, etc.)
+        
+        Returns:
+            Dict with 'strategy', 'params', and 'reasoning'
+        """
+        query_lower = query.lower()
+        word_count = len(query.split())
+        
+        # Analyze query characteristics
+        is_question = query.strip().endswith('?')
+        has_comparison = any(word in query_lower for word in ['compare', 'difference', 'versus', 'vs', 'between'])
+        has_list_intent = any(word in query_lower for word in ['list', 'all', 'types of', 'kinds of', 'examples'])
+        has_specific_entity = self._has_specific_entity(query)
+        is_exploratory = any(word in query_lower for word in ['overview', 'about', 'general', 'introduction'])
+        
+        # Decision Logic
+        
+        # 1. Context-Aware Retrieval: For specific entity queries where surrounding context matters
+        if has_specific_entity and not has_list_intent and word_count <= 8:
+            return {
+                'strategy': 'context_aware',
+                'params': {'context_window': 1},
+                'reasoning': 'Specific entity query - retrieving with surrounding context'
+            }
+        
+        # 2. MMR (Diversity): For exploratory, comparison, or list queries
+        if has_comparison or has_list_intent or is_exploratory:
+            diversity_factor = 0.7 if has_comparison else 0.6
+            return {
+                'strategy': 'mmr',
+                'params': {'diversity_factor': diversity_factor},
+                'reasoning': f'Query needs diverse results (comparison/list/exploratory)'
+            }
+        
+        # 3. Hybrid Search: For questions that might benefit from keyword matching
+        if is_question and word_count >= 5:
+            return {
+                'strategy': 'hybrid',
+                'params': {'semantic_weight': 0.7},
+                'reasoning': 'Question query - combining semantic and keyword search'
+            }
+        
+        # 4. Basic Retrieval: Default for precise, short queries
+        return {
+            'strategy': 'basic',
+            'params': {},
+            'reasoning': 'Precise query - using standard semantic search'
+        }
+    
+    def _has_specific_entity(self, query: str) -> bool:
+        """
+        Check if query mentions a specific medical condition, treatment, or entity.
+        
+        Args:
+            query: User's query
+        
+        Returns:
+            bool: True if specific entity detected
+        """
+        query_lower = query.lower()
+        
+        # Medical conditions (Ayurvedic and Western)
+        conditions = [
+            'atisara', 'jwara', 'arsha', 'grahani', 'prameha', 'kamala', 'pakshaghata',
+            'diabetes', 'fever', 'diarrhea', 'constipation', 'asthma', 'epilepsy',
+            'hemorrhoids', 'jaundice', 'arthritis'
+        ]
+        
+        # Specific treatments or herbs
+        treatments = [
+            'triphala', 'ashwagandha', 'brahmi', 'guggulu', 'shatavari',
+            'panchakarma', 'virechana', 'basti', 'nasya'
+        ]
+        
+        # Check for specific entities
+        for entity in conditions + treatments:
+            if entity in query_lower:
+                return True
+        
+        # Check for pattern: "what is X" or "treatment for X"
+        if 'what is' in query_lower or 'treatment for' in query_lower:
+            return True
+        
+        return False
+    
+    def should_retry_with_different_strategy(self, 
+                                            query: str,
+                                            current_strategy: str,
+                                            results: List[Dict],
+                                            min_results_threshold: int = 2) -> Optional[Dict[str, Any]]:
+        """
+        Decide if retrieval should be retried with a different strategy.
+        
+        Args:
+            query: Original query
+            current_strategy: Strategy that was just used
+            results: Results from current strategy
+            min_results_threshold: Minimum acceptable number of results
+        
+        Returns:
+            New strategy dict if retry needed, None otherwise
+        """
+        # Check if results are insufficient
+        if len(results) >= min_results_threshold:
+            return None
+        
+        logger.warning(f"Insufficient results ({len(results)}) with {current_strategy} strategy")
+        
+        # Fallback strategy chain
+        fallback_chain = {
+            'basic': 'hybrid',
+            'hybrid': 'mmr',
+            'mmr': 'context_aware',
+            'context_aware': None  # No more fallbacks
+        }
+        
+        next_strategy = fallback_chain.get(current_strategy)
+        
+        if next_strategy:
+            logger.info(f"Retrying with {next_strategy} strategy")
+            return self.select_strategy_by_name(next_strategy, query)
+        
+        return None
+    
+    def select_strategy_by_name(self, strategy_name: str, query: str) -> Dict[str, Any]:
+        """
+        Get strategy configuration by name.
+        
+        Args:
+            strategy_name: Name of strategy (basic, mmr, hybrid, context_aware)
+            query: User's query
+        
+        Returns:
+            Strategy configuration dict
+        """
+        strategies = {
+            'basic': {
+                'strategy': 'basic',
+                'params': {},
+                'reasoning': 'Manual selection: basic retrieval'
+            },
+            'mmr': {
+                'strategy': 'mmr',
+                'params': {'diversity_factor': 0.6},
+                'reasoning': 'Manual selection: MMR for diversity'
+            },
+            'hybrid': {
+                'strategy': 'hybrid',
+                'params': {'semantic_weight': 0.7},
+                'reasoning': 'Manual selection: hybrid semantic+keyword'
+            },
+            'context_aware': {
+                'strategy': 'context_aware',
+                'params': {'context_window': 1},
+                'reasoning': 'Manual selection: context-aware retrieval'
+            }
+        }
+        
+        return strategies.get(strategy_name, strategies['basic'])

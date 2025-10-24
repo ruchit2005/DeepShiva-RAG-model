@@ -39,7 +39,8 @@ class RAGAgent:
         self.retriever = Retriever(
             self.chroma_manager,
             use_query_optimization=settings.USE_QUERY_OPTIMIZATION,
-            use_gatekeeper=settings.USE_GATEKEEPER
+            use_gatekeeper=settings.USE_GATEKEEPER,
+            use_strategist=getattr(settings, 'USE_STRATEGIST', True)
         )
         self.evaluator = RetrievalEvaluator()
         
@@ -115,15 +116,17 @@ class RAGAgent:
                query: str,
                top_k: int = None,
                use_reranking: bool = None,
-               validate_results: bool = None) -> dict:
+               validate_results: bool = None,
+               strategy: str = None) -> dict:
         """
-        Advanced search with multi-step pipeline.
+        Advanced search with multi-step agentic pipeline.
         
         Args:
             query: Search query
             top_k: Number of results
             use_reranking: Override default reranking setting
             validate_results: Whether to validate results quality
+            strategy: Retrieval strategy ('auto', 'basic', 'mmr', 'hybrid', 'context_aware')
         
         Returns:
             Dict with results, metadata, and any clarifications needed
@@ -136,10 +139,15 @@ class RAGAgent:
         
         validate = validate_results if validate_results is not None else settings.VALIDATE_RESULTS
         
+        # Convert 'auto' to None (let strategist decide)
+        if strategy == 'auto':
+            strategy = None
+        
         response = self.retriever.retrieve(
             query=query, 
             top_k=top_k,
-            validate_results=validate
+            validate_results=validate,
+            strategy=strategy
         )
         
         results = response.get('results', [])
@@ -232,6 +240,8 @@ def main():
     parser.add_argument('--query', help='Search query')
     parser.add_argument('--top-k', type=int, default=5, help='Number of results')
     parser.add_argument('--no-rerank', action='store_true', help='Disable reranking')
+    parser.add_argument('--strategy', choices=['auto', 'basic', 'mmr', 'hybrid', 'context_aware'],
+                       default='auto', help='Retrieval strategy (auto=intelligent selection)')
     parser.add_argument('--num-test-queries', type=int, default=50, 
                        help='Number of test queries for evaluation')
     
@@ -258,7 +268,8 @@ def main():
         response = agent.search(
             query=args.query,
             top_k=args.top_k,
-            use_reranking=not args.no_rerank
+            use_reranking=not args.no_rerank,
+            strategy=args.strategy
         )
         
         # Check if clarification is needed
@@ -271,6 +282,13 @@ def main():
         
         print(f"\n🔍 Search Results for: '{args.query}'\n")
         print("=" * 80)
+        
+        # Show strategy used
+        if metadata.get('strategy_used'):
+            print(f"🎯 Strategy: {metadata['strategy_used']}")
+            if metadata.get('strategy_reasoning'):
+                print(f"   Reasoning: {metadata['strategy_reasoning']}")
+            print("=" * 80)
         
         # Show query optimization if used
         if metadata.get('optimized_query'):
